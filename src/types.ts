@@ -10,4 +10,21 @@ export interface Recipe {
   servings: number;
 }
 
+export interface SpoonacularRecipe {
+  id: number;
+  title: string;
+  cuisines: string[];
+  extendedIngredients: {
+    original: string;
+  }[];
+  analyzedInstructions: {
+    steps: {
+      step: string;
+    }[];
+  }[];
+  image: string;
+  readyInMinutes: number;
+  servings: number;
+}
+
 export type Cuisine = 'All' | 'Italian' | 'Mexican' | 'Asian' | 'American' | 'Mediterranean';

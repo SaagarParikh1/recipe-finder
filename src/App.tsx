@@ -1,26 +1,97 @@
-import React, { useState, useMemo } from 'react';
-import { Search, ChefHat } from 'lucide-react';
-import { recipes } from './data/recipes';
+import React, { useState, useEffect } from 'react';
+import { Search, ChefHat, Loader2, Sparkles } from 'lucide-react';
 import { RecipeCard } from './components/RecipeCard';
 import { Recipe, Cuisine } from './types';
+import { searchRecipes, getPopularRecipesByCuisine } from './api/recipes';
 
 const cuisineTypes: Cuisine[] = ['All', 'Italian', 'Mexican', 'Asian', 'American', 'Mediterranean'];
 
 function App() {
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedCuisine, setSelectedCuisine] = useState<Cuisine>('All');
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [popularRecipes, setPopularRecipes] = useState<Record<string, Recipe[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filteredRecipes = useMemo(() => {
-    return recipes.filter((recipe) => {
-      const matchesSearch = recipe.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        recipe.ingredients.some(i => i.toLowerCase().includes(searchTerm.toLowerCase()));
-      const matchesCuisine = selectedCuisine === 'All' || recipe.cuisine === selectedCuisine;
-      const matchesFavorites = !showOnlyFavorites || favorites.includes(recipe.id);
-      return matchesSearch && matchesCuisine && matchesFavorites;
-    });
-  }, [searchTerm, selectedCuisine, favorites, showOnlyFavorites]);
+  // Fetch popular recipes on initial load
+  useEffect(() => {
+    const fetchPopularRecipes = async () => {
+      setInitialLoading(true);
+      try {
+        const popularByCategory = await Promise.all(
+          cuisineTypes
+            .filter(cuisine => cuisine !== 'All')
+            .map(async (cuisine) => {
+              const recipes = await getPopularRecipesByCuisine(cuisine);
+              return [cuisine, recipes] as [string, Recipe[]];
+            })
+        );
+        
+        setPopularRecipes(Object.fromEntries(popularByCategory));
+      } catch (err) {
+        console.error('Error fetching popular recipes:', err);
+        setError('Failed to load popular recipes. Please try again later.');
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+
+    fetchPopularRecipes();
+  }, []);
+
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Fetch recipes when search term or cuisine changes
+  useEffect(() => {
+    const fetchRecipes = async () => {
+      if (!debouncedSearch) {
+        setRecipes([]);
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+
+      try {
+        const results = await searchRecipes(debouncedSearch, selectedCuisine);
+        setRecipes(results);
+      } catch (err) {
+        setError('Failed to fetch recipes. Please try again later.');
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRecipes();
+  }, [debouncedSearch, selectedCuisine]);
+
+  const filteredRecipes = recipes.filter((recipe) => {
+    return !showOnlyFavorites || favorites.includes(recipe.id);
+  });
+
+  // Group recipes by cuisine when showing all cuisines
+  const groupedRecipes = selectedCuisine === 'All' 
+    ? cuisineTypes.slice(1).reduce((acc, cuisine) => {
+        const cuisineRecipes = filteredRecipes.filter(recipe => recipe.cuisine === cuisine);
+        if (cuisineRecipes.length > 0) {
+          acc[cuisine] = cuisineRecipes;
+        }
+        return acc;
+      }, {} as Record<string, Recipe[]>)
+    : { [selectedCuisine]: filteredRecipes };
 
   const toggleFavorite = (id: string) => {
     setFavorites(prev => 
@@ -29,6 +100,8 @@ function App() {
         : [...prev, id]
     );
   };
+
+  const displayRecipes = debouncedSearch ? groupedRecipes : popularRecipes;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -58,7 +131,7 @@ function App() {
           </div>
 
           <div className="flex flex-wrap gap-4 items-center">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {cuisineTypes.map((cuisine) => (
                 <button
                   key={cuisine}
@@ -86,20 +159,52 @@ function App() {
           </div>
         </div>
 
-        {/* Recipe Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredRecipes.map((recipe) => (
-            <RecipeCard
-              key={recipe.id}
-              recipe={recipe}
-              isFavorite={favorites.includes(recipe.id)}
-              onToggleFavorite={toggleFavorite}
-            />
-          ))}
-        </div>
+        {/* Loading States */}
+        {(loading || initialLoading) && (
+          <div className="text-center py-12">
+            <Loader2 className="w-16 h-16 text-orange-500 animate-spin mx-auto mb-4" />
+            <p className="text-gray-500">
+              {initialLoading ? 'Loading popular recipes...' : 'Searching for recipes...'}
+            </p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="text-center py-12">
+            <p className="text-red-500">{error}</p>
+          </div>
+        )}
+
+        {/* Recipe Sections */}
+        {!loading && !initialLoading && !error && Object.entries(displayRecipes).map(([cuisine, recipes]) => (
+          recipes.length > 0 && (
+            <div key={cuisine} className="mb-12">
+              <div className="flex items-center gap-2 mb-6">
+                <h2 className="text-2xl font-bold text-gray-800">{cuisine} Cuisine</h2>
+                {!debouncedSearch && (
+                  <div className="flex items-center gap-1 px-3 py-1 bg-orange-100 rounded-full">
+                    <Sparkles className="w-4 h-4 text-orange-500" />
+                    <span className="text-sm text-orange-700">Popular Recipes</span>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {recipes.map((recipe) => (
+                  <RecipeCard
+                    key={recipe.id}
+                    recipe={recipe}
+                    isFavorite={favorites.includes(recipe.id)}
+                    onToggleFavorite={toggleFavorite}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        ))}
 
         {/* Empty State */}
-        {filteredRecipes.length === 0 && (
+        {!loading && !initialLoading && !error && Object.keys(displayRecipes).length === 0 && (
           <div className="text-center py-12">
             <ChefHat className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900">No recipes found</h3>
